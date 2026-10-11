@@ -1,0 +1,13 @@
+*.drawio
+02_sim/
+**/30_sim/
+**/xcelium.d/**
+**/worklib/*.pak
+**/*.pak
+*.log
+*.history
+*.dsn
+*.trn
+*.shm/
+xrun.history
+xrun.log
