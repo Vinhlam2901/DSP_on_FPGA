@@ -3,7 +3,7 @@ module lfsr_noise_gen #(
 )(
   input  logic        i_clk,
   input  logic        i_rst_n,
-  input  logic        i_enable,
+  input  logic        i_en,
   output logic [15:0] o_noise_out
 );
 
@@ -15,7 +15,7 @@ module lfsr_noise_gen #(
   always_ff @(posedge i_clk) begin
     if (!i_rst_n) begin
       lfsr_reg <= SEED;
-    end else if (i_enable) begin
+    end else if (i_en) begin
       // Dịch toàn bộ mảng sang trái 1 bit, và nhét bit feedback vào vị trí LSB
       lfsr_reg <= {lfsr_reg[14:0], feedback}; 
     end

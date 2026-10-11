@@ -5,6 +5,7 @@ module generator_wave #(
   input  logic               i_clk,
   input  logic               i_rst_n,
   input  logic               i_noise_en,
+  input  logic               i_noise_lvl,
   input  logic [31:0]        i_tuning_word,  // Điều khiển Tần số chung
   input  logic [1:0]         i_amp_ctrl,  // Điều khiển Biên độ chung (00: 25%, 01: 50%, 10: 75%, 11: 100%)
   input  logic [1:0]         i_wave_sel,     // 00: Sine, 01: Triangle, 10: Sawtooth, 11: ECG
@@ -16,6 +17,7 @@ module generator_wave #(
   localparam real PI = 3.141592653589793;
     
   logic        [31:0]           phase_acc;
+  logic        [31:0]           phase_acc_prev;
   logic        [7:0]            tri_unsigned;
   // 2. ROM cho Sóng Sine và ECG
   logic signed [DATA_WIDTH-1:0] sine_lut [NUM_SAMPLES];
@@ -25,7 +27,9 @@ module generator_wave #(
   logic signed [DATA_WIDTH-1:0] raw_triangle;
   logic signed [DATA_WIDTH-1:0] raw_sawtooth;
   logic signed [DATA_WIDTH-1:0] raw_ecg;
+  logic signed [DATA_WIDTH-1:0] raw_square;
   logic signed [DATA_WIDTH-1:0] selected_wave;
+  logic signed [DATA_WIDTH-1:0] wave_amp_controlled;
   logic signed [23:0]           wave_ext;
   logic        [15:0]           noise_out;      // Ngõ ra từ module lfsr_noise_gen
   logic signed [15:0]           noise_signed;   // Nhiễu sau khi đã chuyển thành số có dấu
@@ -46,14 +50,38 @@ initial begin
   end
 
   // Lấy dữ liệu ROM cho Sine và ECG
-  assign raw_sine = sine_lut[phase_acc[31 -: PHASE_WIDTH]];
-  assign raw_ecg  = ecg_lut[phase_acc[31 -: PHASE_WIDTH]];
+  assign raw_sine   = sine_lut[phase_acc[31 -: PHASE_WIDTH]];
+  assign raw_ecg    = ecg_lut[phase_acc[31 -: PHASE_WIDTH]];
+  assign raw_square = (!phase_acc[31]) ? 8'd127 : -8'd128;
+//==================INSTANTIATION============================
+  cla_adder_24bit noise_adder (
+    .a_i      (wave_ext),
+    .b_i      (noise_scaled),
+    .cin_i    (1'b0),
+    .cout_o   (),
+    .result_o(final_out)
+  );
+  cla_adder_32bit phase_accum (
+    .a_i      (phase_acc),
+    .b_i      (i_tuning_word),
+    .cin_i    (1'b0),
+    .cout_o   (),
+    .result_o(phase_acc_prev)
+  );
+  lfsr_noise_gen #(
+    .SEED(16'hABCD)
+  ) noise_gen (
+    .i_clk(i_clk),
+    .i_rst_n(i_rst_n),
+    .i_en(i_noise_en),
+    .o_noise_out(noise_out)
+  );
 //=============PLL==========================================
-    always_ff @(posedge i_clk or negedge i_rst_n) begin
+    always_ff @(posedge i_clk) begin
       if (!i_rst_n) begin
         phase_acc <= '0;
       end else begin
-        phase_acc <= phase_acc + i_tuning_word; 
+        phase_acc <= phase_acc_prev; 
       end
     end
   // Thuật toán tạo sóng Răng cưa (Đảo bit cao nhất để chuyển từ Unsigned sang Signed)
@@ -74,28 +102,20 @@ initial begin
   // 5. Khối điều chỉnh Biên độ (Dùng chung cho tất cả)
   always_comb begin
     case (i_amp_ctrl)
-      2'b00: wo = selected_wave >>> 2;                      // 25%
-      2'b01: wo = selected_wave >>> 1;                      // 50%
-      2'b10: wo = (selected_wave >>> 1) + (selected_wave >>> 2); // 75%
-      2'b11: wo = selected_wave;                            // 100%
+      2'b00: wave_amp_controlled = selected_wave >>> 2;                      // 25%
+      2'b01: wave_amp_controlled = selected_wave >>> 1;                      // 50%
+      2'b10: wave_amp_controlled = (selected_wave >>> 1) + (selected_wave >>> 2); // 75%
+      2'b11: wave_amp_controlled = selected_wave;                            // 100%
     endcase
   end
-  lfsr_noise_gen #(
-    .SEED(16'hABCD)
-  ) noise_gen (
-    .i_clk(i_clk),
-    .i_rst_n(i_rst_n),
-    .i_en(i_noise_en),
-    .o_noise_out(noise_out)
-  );
-  assign wave_ext = {16{selected_wave[23]}, selected_wave};
-  assign noise_signed = $signed(noise_out);
+  assign wave_ext     = {{16{wave_amp_controlled[DATA_WIDTH-1]}}, wave_amp_controlled};
+  assign noise_signed = {~noise_out[15], noise_out[14:0]};
   // 3. Mở rộng lên 24-bit và chỉnh mức độ nhiễu (Amplitude Scaling)
   // Giả sử có một switch SW để chọn mức nhiễu:
   // - 1'b0: Nhiễu nhỏ (Dịch nhiễu xuống các bit thấp, giữ lại dấu)
   // - 1'b1: Nhiễu lớn (Đẩy nhiễu lên các bit cao hơn)
   always_comb begin
-    if (noise_level_switch == 1'b0) begin
+    if (i_noise_lvl == 1'b0) begin
       // Kéo giãn dấu (Sign-extension) 8 bit cao, đặt nhiễu ở 16 bit thấp
       noise_scaled = {{8{noise_signed[15]}}, noise_signed}; 
     end else begin
@@ -104,5 +124,5 @@ initial begin
     end
   end
   // 4. Kết hợp sóng gốc và nhiễu
-  assign o_wave_out = i_noise_en ? (wave_ext + noise_scaled) : wave_ext;
+  assign o_wave_out = i_noise_en ? final_out : wave_ext;
 endmodule
