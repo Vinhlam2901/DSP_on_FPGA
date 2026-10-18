@@ -1,15 +1,15 @@
 module generator_wave #(
   parameter int PHASE_WIDTH = 10,  // Số bit biểu diễn góc pha (2^8 = 256 mẫu góc)
-  parameter int DATA_WIDTH = 8
+  parameter int DATA_WIDTH = 24
 )(
-  input  logic               i_clk,
-  input  logic               i_rst_n,
-  input  logic               i_noise_en,
-  input  logic               i_noise_lvl,
-  input  logic [31:0]        i_tuning_word,  // Điều khiển Tần số chung
-  input  logic [1:0]         i_amp_ctrl,  // Điều khiển Biên độ chung (00: 25%, 01: 50%, 10: 75%, 11: 100%)
-  input  logic [1:0]         i_wave_sel,     // 00: Sine, 01: Triangle, 10: Sawtooth, 11: ECG
-  output logic signed [23:0] o_wave_out
+  input  logic                         i_clk,
+  input  logic                         i_rst_n,
+  input  logic                         i_noise_en,
+  input  logic                         i_noise_lvl,
+  input  logic [31:0]                  i_tuning_word,  // Điều khiển Tần số chung
+  input  logic [1:0]                   i_amp_ctrl,  // Điều khiển Biên độ chung (00: 25%, 01: 50%, 10: 75%, 11: 100%)
+  input  logic [1:0]                   i_wave_sel,     // 00: Sine, 01: Triangle, 10: Sawtooth, 11: ECG
+  output logic signed [DATA_WIDTH-1:0] o_wave_out
 );
 
 //=============DECLARATION=======================================
@@ -30,24 +30,24 @@ module generator_wave #(
   logic signed [DATA_WIDTH-1:0] raw_square;
   logic signed [DATA_WIDTH-1:0] selected_wave;
   logic signed [DATA_WIDTH-1:0] wave_amp_controlled;
-  logic signed [23:0]           wave_ext;
   logic        [15:0]           noise_out;      // Ngõ ra từ module lfsr_noise_gen
   logic signed [15:0]           noise_signed;   // Nhiễu sau khi đã chuyển thành số có dấu
-  logic signed [23:0]           noise_scaled;   // Nhiễu đã được mở rộng lên 24-bit
-  logic signed [23:0]           final_out;      // Sóng mang ra DAC
+  logic signed [DATA_WIDTH-1:0] noise_scaled;   // Nhiễu đã được mở rộng lên 24-bit
+  logic signed [DATA_WIDTH-1:0] final_out;      // Sóng mang ra DAC
 //=================ROM====================================
-initial begin
-  real angle;
-  real sin_val;
-  int max_amplitude;
-  max_amplitude = (1 << (DATA_WIDTH - 1)) - 1; // Giá trị cực đại của số nguyên có dấu
-  for (int i = 0; i < NUM_SAMPLES; i++) begin
-    angle = (2.0 * PI * i) / real'(NUM_SAMPLES);
-    sin_val = $sin(angle);
-    // Ép kiểu về số nguyên có dấu và lưu vào ROM
-    sine_lut[i] = signed'(int'(sin_val * real'(max_amplitude)));
+  initial begin
+    real angle;
+    real sin_val;
+    int max_amplitude;
+    max_amplitude = (1 << (DATA_WIDTH - 1)) - 1; // Giá trị cực đại của số nguyên có dấu
+    for (int i = 0; i < NUM_SAMPLES; i++) begin
+      angle = (2.0 * PI * i) / real'(NUM_SAMPLES);
+      sin_val = $sin(angle);
+      // Ép kiểu về số nguyên có dấu và lưu vào ROM
+      sine_lut[i] = signed'(int'(sin_val * real'(max_amplitude)));
     end
   end
+  $readmemh("ecg_real_1024_24bit.mem", ecg_lut);
 
   // Lấy dữ liệu ROM cho Sine và ECG
   assign raw_sine   = sine_lut[phase_acc[31 -: PHASE_WIDTH]];
@@ -108,7 +108,6 @@ initial begin
       2'b11: wave_amp_controlled = selected_wave;                            // 100%
     endcase
   end
-  assign wave_ext     = {{16{wave_amp_controlled[DATA_WIDTH-1]}}, wave_amp_controlled};
   assign noise_signed = {~noise_out[15], noise_out[14:0]};
   // 3. Mở rộng lên 24-bit và chỉnh mức độ nhiễu (Amplitude Scaling)
   // Giả sử có một switch SW để chọn mức nhiễu:
@@ -124,5 +123,5 @@ initial begin
     end
   end
   // 4. Kết hợp sóng gốc và nhiễu
-  assign o_wave_out = i_noise_en ? final_out : wave_ext;
+  assign o_wave_out = i_noise_en ? final_out : wave_amp_controlled;
 endmodule
