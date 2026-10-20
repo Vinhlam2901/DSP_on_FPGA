@@ -8,14 +8,17 @@ module generator_wave #(
   input  logic                         i_noise_lvl,
   input  logic [31:0]                  i_tuning_word,  // Điều khiển Tần số chung
   input  logic [1:0]                   i_amp_ctrl,  // Điều khiển Biên độ chung (00: 25%, 01: 50%, 10: 75%, 11: 100%)
-  input  logic [1:0]                   i_wave_sel,     // 00: Sine, 01: Triangle, 10: Sawtooth, 11: ECG
+  input  logic [2:0]                   i_wave_sel,     // 00: Sine, 01: Triangle, 10: Sawtooth, 11: ECG
   output logic signed [DATA_WIDTH-1:0] o_wave_out
 );
 
 //=============DECLARATION=======================================
   localparam int NUM_SAMPLES = 1 << PHASE_WIDTH;
   localparam real PI = 3.141592653589793;
-    
+  // Cực đại dương 24-bit: 0111...111 = 24'h7FFFFF
+  localparam signed [DATA_WIDTH-1:0] MAX_POS = (1 << (DATA_WIDTH - 1)) - 1; 
+  // Cực đại âm 24-bit:   1000...000 = 24'h800000
+  localparam signed [DATA_WIDTH-1:0] MAX_NEG = ~(MAX_POS);
   logic        [31:0]           phase_acc;
   logic        [31:0]           phase_acc_prev;
   logic        [7:0]            tri_unsigned;
@@ -36,6 +39,7 @@ module generator_wave #(
   logic signed [DATA_WIDTH-1:0] final_out;      // Sóng mang ra DAC
 //=================ROM====================================
   initial begin
+  /*
     real angle;
     real sin_val;
     int max_amplitude;
@@ -46,13 +50,22 @@ module generator_wave #(
       // Ép kiểu về số nguyên có dấu và lưu vào ROM
       sine_lut[i] = signed'(int'(sin_val * real'(max_amplitude)));
     end
+	 */
+	 $readmemh("sine_real_1024_24bit.mem", sine_lut);
+	 $readmemh("ecg_real_1024_24bit.mem", ecg_lut);
   end
-  $readmemh("ecg_real_1024_24bit.mem", ecg_lut);
+  
 
   // Lấy dữ liệu ROM cho Sine và ECG
   assign raw_sine   = sine_lut[phase_acc[31 -: PHASE_WIDTH]];
   assign raw_ecg    = ecg_lut[phase_acc[31 -: PHASE_WIDTH]];
-  assign raw_square = (!phase_acc[31]) ? 8'd127 : -8'd128;
+  assign raw_square = (phase_acc[31] == 1'b0) ? MAX_POS : MAX_NEG;
+  // Thuật toán tạo sóng Răng cưa (Đảo bit cao nhất để chuyển từ Unsigned sang Signed)
+  assign raw_sawtooth = {~phase_acc[31], phase_acc[30:24]};
+  // Thuật toán tạo sóng Tam giác bằng cách "gấp" pha
+  // Lấy 8 bit từ [30:23] để biên độ chạy đủ full-scale, đảo lại nếu nửa chu kỳ sau
+  assign tri_unsigned = phase_acc[31] ? ~phase_acc[30:23] : phase_acc[30:23];
+  assign raw_triangle = tri_unsigned - 8'd128; // Dời trục tọa độ để thành số có dấu
 //==================INSTANTIATION============================
   cla_adder_24bit noise_adder (
     .a_i      (wave_ext),
@@ -84,19 +97,16 @@ module generator_wave #(
         phase_acc <= phase_acc_prev; 
       end
     end
-  // Thuật toán tạo sóng Răng cưa (Đảo bit cao nhất để chuyển từ Unsigned sang Signed)
-  assign raw_sawtooth = {~phase_acc[31], phase_acc[30:24]};
-  // Thuật toán tạo sóng Tam giác bằng cách "gấp" pha
-  // Lấy 8 bit từ [30:23] để biên độ chạy đủ full-scale, đảo lại nếu nửa chu kỳ sau
-  assign tri_unsigned = phase_acc[31] ? ~phase_acc[30:23] : phase_acc[30:23];
-  assign raw_triangle = tri_unsigned - 8'd128; // Dời trục tọa độ để thành số có dấu
+
   // 4. Khối Multiplexer chọn sóng
   always_comb begin
     case (i_wave_sel)
-      2'b00: selected_wave = raw_sine;
-      2'b01: selected_wave = raw_triangle;
-      2'b10: selected_wave = raw_sawtooth;
-      2'b11: selected_wave = raw_ecg;
+	      3'b000: selected_wave = raw_sine;     // Sóng Sine
+        3'b001: selected_wave = raw_square;   // Sóng Vuông
+        3'b010: selected_wave = raw_triangle;      // Chỗ này bạn có thể đổi thành Sóng Tam giác sau
+        3'b011: selected_wave = raw_sawtooth;      // Sóng ECG
+        3'b100: selected_wave = raw_ecg;      // Sóng ECG
+        default: selected_wave = raw_sine;
     endcase
   end
   // 5. Khối điều chỉnh Biên độ (Dùng chung cho tất cả)
