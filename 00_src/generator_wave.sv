@@ -34,8 +34,8 @@ module generator_wave #(
   logic signed [DATA_WIDTH-1:0] raw_square;
   logic signed [DATA_WIDTH-1:0] selected_wave;
   logic signed [DATA_WIDTH-1:0] wave_amp_controlled;
-  logic        [15:0]           noise_out;      // Ngõ ra từ module lfsr_noise_gen
-  logic signed [15:0]           noise_signed;   // Nhiễu sau khi đã chuyển thành số có dấu
+  logic        [DATA_WIDTH-1:0] noise_out;      // Ngõ ra từ module lfsr_noise_gen
+  logic signed [DATA_WIDTH-1:0] noise_signed;   // Nhiễu sau khi đã chuyển thành số có dấu
   logic signed [DATA_WIDTH-1:0] noise_scaled;   // Nhiễu đã được mở rộng lên 24-bit
   logic signed [DATA_WIDTH-1:0] final_out;      // Sóng mang ra DAC
 //=================ROM====================================
@@ -68,16 +68,27 @@ module generator_wave #(
     .cout_o   (),
     .result_o(phase_acc_prev)
   );
-  lfsr_noise_gen #(
-    .SEED(16'hABCD)
-  ) noise_gen (
-    .i_clk(i_clk),
-    .i_rst_n(i_rst_n),
-    .i_en(i_noise_en),
-    .o_noise_out(noise_out)
+ lfsr_noise_gen #(.OUT_WIDTH(DATA_WIDTH)) noise_gen (
+    .i_clk       (i_clk),
+    .i_rst_n     (i_rst_n),
+    .i_en        (i_noise_en),
+    .o_noise_out (noise_out)
   );
+
+  // Bit ngẫu nhiên đều nên đọc thẳng như số có dấu là được,
+  // không cần đảo MSB như bản cũ.
+  assign noise_signed = $signed(noise_out);
+
+  always_comb begin
+    if (i_noise_lvl == 1'b0) noise_scaled = noise_signed >>> 8; // ~ -48 dBFS
+    else                     noise_scaled = noise_signed >>> 4; // ~ -24 dBFS
+  end
+  logic ovf;
+  assign ovf = (wave_ext[23] == noise_scaled[23]) && (final_out[23] != wave_ext[23]);
+  assign o_wave_out = !i_noise_en ? wave_amp_controlled :
+                      ovf ? (wave_ext[23] ? MAX_NEG : MAX_POS) : final_out;
 //=============PLL==========================================
-    always_ff @(posedge i_clk) begin
+    always_ff @(posedge i_clk or negedge i_rst_n) begin
       if (!i_rst_n) begin
         phase_acc <= '0;
       end else begin
@@ -105,21 +116,4 @@ module generator_wave #(
       2'b11: wave_amp_controlled = selected_wave;                            // 100%
     endcase
   end
-  assign noise_signed = {~noise_out[15], noise_out[14:0]};
-  assign wave_ext = wave_amp_controlled;
-  // 3. Mở rộng lên 24-bit và chỉnh mức độ nhiễu (Amplitude Scaling)
-  // Giả sử có một switch SW để chọn mức nhiễu:
-  // - 1'b0: Nhiễu nhỏ (Dịch nhiễu xuống các bit thấp, giữ lại dấu)
-  // - 1'b1: Nhiễu lớn (Đẩy nhiễu lên các bit cao hơn)
-  always_comb begin
-    if (i_noise_lvl == 1'b0) begin
-      // Kéo giãn dấu (Sign-extension) 8 bit cao, đặt nhiễu ở 16 bit thấp
-      noise_scaled = {{8{noise_signed[15]}}, noise_signed}; 
-    end else begin
-      // Đặt nhiễu lên cao hơn một chút, chèn 4 số 0 vào LSB
-      noise_scaled = {{4{noise_signed[15]}}, noise_signed, 4'b0000}; 
-    end
-  end
-  // 4. Kết hợp sóng gốc và nhiễu
-  assign o_wave_out = i_noise_en ? final_out : wave_amp_controlled;
 endmodule

@@ -39,7 +39,7 @@ module DE10_Standard_golden_top  #(
   logic [15:0] freq_val;
   logic [31:0] step_freq;
   logic [31:0] tuning_word;
-  always_ff @(posedge CLOCK_50) begin
+  always_ff @(posedge CLOCK_50 or negedge rst_n) begin
     if (!rst_n) begin
       freq_val   <= 1000;
       amp_ctrl   <= 2'b11;
@@ -56,14 +56,14 @@ module DE10_Standard_golden_top  #(
         endcase
       end
       if (btn_up_tick) begin
-        case (SW[4:3])
-          2'b00: if (freq_val + step_freq <= MAX_FREQ) freq_val <= freq_val + step_freq;
-          2'b01: if (amp_ctrl < 2'b11) amp_ctrl <= amp_ctrl + 1;
-        endcase
-      end else if (btn_down_tick) begin
-        case (SW[4:3])
-          2'b00: if (freq_val >= step_freq + MIN_FREQ) freq_val <= freq_val - step_freq;
-          2'b01: if (amp_ctrl > 2'b00) amp_ctrl <= amp_ctrl - 1;
+        case (SW[4])
+          1'b0: if (freq_val + step_freq <= MAX_FREQ) freq_val <= freq_val + step_freq;
+          1'b1: amp_ctrl <= amp_ctrl + 2'b01; // Cộng 1 để xoay vòng qua 4 mức: 00 -> 01 -> 10 -> 11 -> 00
+        endcase 
+        end else if (btn_down_tick) begin
+        case (SW[4])
+          1'b0: if (freq_val >= step_freq + MIN_FREQ) freq_val <= freq_val - step_freq;
+          // Bỏ case 2'b01 ở đây vì không cần dùng nút Down để chỉnh biên độ nữa
         endcase
       end
     end
@@ -92,7 +92,7 @@ module DE10_Standard_golden_top  #(
     .locked   ()
   );
   assign AUD_XCK = clk_12M;
-  always_ff @(posedge clk_12M) begin
+  always_ff @(posedge clk_12M or negedge rst_n) begin
     if (!rst_n) start_cfg <= 1'b0;
     else        start_cfg <= 1'b1;
   end
