@@ -18,7 +18,7 @@ module DE10_Standard_golden_top  #(
 );
   logic rst_n;
   assign rst_n = KEY[0];
-  assign LEDR = SW;
+  assign LEDR[9:4] = SW[9:4];
   // 1. Chống rung phím
   logic btn_down_tick, btn_up_tick, btn_step_tick;
   button_debouncer db_down (.clk(CLOCK_50), .rst_n(rst_n), .btn_in(KEY[1]), .btn_tick(btn_down_tick));
@@ -39,6 +39,7 @@ module DE10_Standard_golden_top  #(
   logic [15:0] freq_val;
   logic [31:0] step_freq;
   logic [31:0] tuning_word;
+  //================Amplitude Control===========================
   always_ff @(posedge CLOCK_50 or negedge rst_n) begin
     if (!rst_n) begin
       freq_val   <= 1000;
@@ -56,20 +57,20 @@ module DE10_Standard_golden_top  #(
         endcase
       end
       if (btn_up_tick) begin
-        case (SW[4])
-          1'b0: if (freq_val + step_freq <= MAX_FREQ) freq_val <= freq_val + step_freq;
-          1'b1: amp_ctrl <= amp_ctrl + 2'b01; // Cộng 1 để xoay vòng qua 4 mức: 00 -> 01 -> 10 -> 11 -> 00
-        endcase 
-        end else if (btn_down_tick) begin
-        case (SW[4])
-          1'b0: if (freq_val >= step_freq + MIN_FREQ) freq_val <= freq_val - step_freq;
-          // Bỏ case 2'b01 ở đây vì không cần dùng nút Down để chỉnh biên độ nữa
-        endcase
+        if (SW[4]) begin
+          if (freq_val + step_freq <= MAX_FREQ) freq_val <= freq_val + step_freq;
+        end else if (~SW[4]) begin
+          amp_ctrl <= amp_ctrl + 2'b01; // Cộng 1 để xoay vòng qua 4 mức: 00 -> 01 -> 10 -> 11 -> 00
+        end  
+      end else if (btn_down_tick) begin
+        if (~SW[4]) begin
+          if (freq_val >= step_freq + MIN_FREQ) freq_val <= freq_val - step_freq;
+        end
       end
     end
   end
   assign tuning_word = freq_val * TW_1HZ;
-  // 3. Hiển thị LED 7 đoạn
+  //================Frequency Control===========================
   logic [3:0] d0, d1, d2, d3, d4;
   assign d0 = freq_val % 10;
   assign d1 = (freq_val / 10) % 10;
@@ -100,9 +101,10 @@ module DE10_Standard_golden_top  #(
     .clk       (clk_12M),
     .rst_n     (rst_n),
     .start_cfg (start_cfg),
-    .cfg_done  (),
-    .cfg_error (),
-    .cfg_busy  (),
+    // Config debug
+    .cfg_done  (LEDR[0]),
+    .cfg_error (LEDR[1]),
+    .cfg_busy  (LEDR[2]),
     .i2c_sda   (FPGA_I2C_SDAT),
     .i2c_scl   (FPGA_I2C_SCLK)
   );
