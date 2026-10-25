@@ -94,4 +94,3 @@ module codec_config_by_i2c (
 		end
 	end
 endmodule
-

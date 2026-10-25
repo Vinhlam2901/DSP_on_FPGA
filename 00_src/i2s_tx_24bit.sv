@@ -105,6 +105,3 @@ module i2s_tx_24bit (
 		end
 	end
 endmodule
-
-
-

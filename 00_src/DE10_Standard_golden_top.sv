@@ -37,8 +37,10 @@ module DE10_Standard_golden_top  #(
   logic [1:0]  amp_ctrl;
   logic [1:0]  step_idx;
   logic [15:0] freq_val;
+  logic [15:0] freq_val_sync1, freq_val_sync2;
   logic [31:0] step_freq;
   logic [31:0] tuning_word;
+
   //================Amplitude Control===========================
   always_ff @(posedge CLOCK_50 or negedge rst_n) begin
     if (!rst_n) begin
@@ -69,10 +71,10 @@ module DE10_Standard_golden_top  #(
       end
     end
   end
-  assign tuning_word = freq_val * TW_1HZ;
+
   //================Frequency Control===========================
   logic [3:0] d0, d1, d2, d3, d4;
-  assign d0 = freq_val % 10;
+  assign d0 =  freq_val % 10;
   assign d1 = (freq_val / 10) % 10;
   assign d2 = (freq_val / 100) % 10;
   assign d3 = (freq_val / 1000) % 10;
@@ -93,6 +95,7 @@ module DE10_Standard_golden_top  #(
     .locked   ()
   );
   assign AUD_XCK = clk_12M;
+ 
   always_ff @(posedge clk_12M or negedge rst_n) begin
     if (!rst_n) start_cfg <= 1'b0;
     else        start_cfg <= 1'b1;
@@ -109,14 +112,27 @@ module DE10_Standard_golden_top  #(
     .i2c_scl   (FPGA_I2C_SCLK)
   );
   logic signed [23:0] dds_wave_out;
+  always_ff @(posedge clk_12M or negedge rst_n) begin
+    if (!rst_n) begin
+      freq_val_sync1 <= '0;
+      freq_val_sync2 <= '0;
+      tuning_word    <= '0;
+    end else begin
+      // Tầng 1 và 2: Đồng bộ hóa tín hiệu freq_val vào miền 12MHz
+      freq_val_sync1 <= freq_val;
+      freq_val_sync2 <= freq_val_sync1;
+      
+      // Tầng 3: Thực hiện phép nhân dựa trên giá trị ĐÃ ĐỒNG BỘ
+      tuning_word    <= freq_val_sync2 * TW_1HZ;
+    end
+  end
   generator_wave #(
     .PHASE_WIDTH(10),
     .DATA_WIDTH(24)
   ) dds_core (
     .i_clk         (clk_12M),
     .i_rst_n       (rst_n),
-    .i_noise_en    (SW[9]),
-    .i_noise_lvl   (SW[8]),   // optional
+    .i_noise_en    (SW[8]),
     .i_tuning_word (tuning_word),
     .i_amp_ctrl    (amp_ctrl),
     .i_wave_sel    (SW[7:5]),
